@@ -50,8 +50,8 @@ def add_playlist(youtube, vid_dict):
     # TODO read privacyStatus from parameter
     body = dict(
         snippet=dict(
-            title="lofi-vaporwave-etc",
-            description='Playlist creada con VBulletinVideoCrawler.'
+            title="title",
+            description='Playlist created with VBulletinVideoCrawler.'
         ),
         status=dict(
             privacyStatus='public'
