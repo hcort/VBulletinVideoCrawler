@@ -45,47 +45,65 @@ def add_video_to_playlist(youtube, videoID, playlistID):
     ).execute()
 
 
-def add_playlist(youtube, vid_dict):
-    # TODO read playlist name from parameter
-    # TODO read privacyStatus from parameter
+def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='unlisted'):
+    if not vid_dict:
+        return
+
+    if not name:
+        name = description
     body = dict(
         snippet=dict(
-            title="lofi-vaporwave-etc",
-            description='Playlist creada con VBulletinVideoCrawler.'
+            title=name,
+            description='Playlist creada con VBulletinVideoCrawler.\n{}\n{}'.format(description, url)
         ),
         status=dict(
-            privacyStatus='public'
+            privacyStatus=privacy
         )
     )
 
     # TODO check if playlist already exists
-    playlists_insert_response = youtube.playlists().insert(
-        part='snippet,status',
-        body=body
-    ).execute()
+    next_page = ''
+    create_list = True
+    while True:
+        mis_listas = youtube.playlists().list(part='id,snippet,status',
+                                              pageToken=next_page, mine=True).execute()
+        next_page = mis_listas.get('nextPageToken')
+        for lista_yt in mis_listas['items']:
+            if lista_yt['snippet'].get('title') == name:
+                create_list = False
+                playlist_id = lista_yt['snippet'].get('id')
+                break
+        if not next_page:
+            break
+    if create_list:
+        playlists_insert_response = youtube.playlists().insert(
+            part='snippet,status',
+            body=body
+        ).execute()
 
-    if not vid_dict:
-        return
+        playlist_id = playlists_insert_response['id']
 
-    playlist_id = playlists_insert_response['id']
 
     # TODO read playlist and check for videos already uploaded?
     for video_id in vid_dict:
         # add_video_to_playlist(youtube, video_id, playlist_id)
-        add_video_request = youtube.playlistItems().insert(
-            part="snippet",
-            body={
-                'snippet': {
-                    'playlistId': playlist_id,
-                    'resourceId': {
-                        'kind': 'youtube#video',
-                        'videoId': video_id
+        try:
+            add_video_request = youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                    'snippet': {
+                        'playlistId': playlist_id,
+                        'resourceId': {
+                            'kind': 'youtube#video',
+                            'videoId': video_id
+                        }
+                        # 'position': 0
                     }
-                    # 'position': 0
                 }
-            }
-        ).execute()
-        print(add_video_request)
+            ).execute()
+            print(add_video_request)
+        except HttpError as err:
+            print('Error al añadir ' + video_id + '\n' + str(err) + '\n\n')
 
     print('New playlist ID: %s' % playlists_insert_response['id'])
 

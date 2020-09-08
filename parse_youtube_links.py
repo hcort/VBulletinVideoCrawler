@@ -9,8 +9,7 @@ from bs4 import BeautifulSoup
 
 class VBulletinVideoCrawler:
 
-    def __init__(self, login_url, login_data):
-        # TODO get login_url from start_url when parsing
+    def __init__(self, login_url='', login_data={}):
         self.__login_url = login_url
         self.__login_data = login_data
         self.__session_started = False
@@ -25,22 +24,19 @@ class VBulletinVideoCrawler:
         self.__current_post_author = ''
         self.__current_post_author_profile = ''
         self.__video_dict = {}
+        self.__thread_name = ''
 
     @property
     def video_dict(self):
         return self.__video_dict
 
-    def check_login(self):
-        if not self.__session_started:
-            self.__session = requests.Session()
-            r = self.__session.post(self.__login_url, data=self.__login_data)
-            # TODO check login
-            self.__session_started = True
-        return self.__session_started
+    @property
+    def thread_name(self):
+        return self.__thread_name
 
     def start_parsing(self, start_url):
-        if not self.check_login():
-            return
+        if not self.__session:
+            self.__session = requests.Session()
         self.__start_url = start_url
         self.__page_number = '1'
         path = urllib.parse.urlparse(start_url)
@@ -175,9 +171,9 @@ class VBulletinVideoCrawler:
 
     def format_post_url(self, id_post):
         self.__current_post_url = '{}showthread.php?t={}&page={}#post{}'.format(self.__base_url,
-                                                                          self.__thread_id,
-                                                                          self.__page_number,
-                                                                          id_post)
+                                                                                self.__thread_id,
+                                                                                self.__page_number,
+                                                                                id_post)
 
     def init_post(self):
         self.__current_post_url = ''
@@ -207,23 +203,50 @@ class VBulletinVideoCrawler:
                 self.parse_javascript_embed(content_div)
                 self.parse_raw_links(content_div)
 
+    def check_private_thread(self, current_page, current_url):
+        if len(current_page.history) > 0:
+            if current_page.history[0].status_code == 302:
+                # comprobar redirección
+                if current_page.url != current_url:
+                    print('Redirigido a ' + current_page.url)
+                    self.do_login()
+                    return self.__session_started
+        return True
+
+    def do_login(self):
+        self.__session_started = False
+        if not self.__session:
+            self.__session = requests.Session()
+        if not self.__login_url:
+            self.__login_url = self.__base_url + 'login.php'
+        r = self.__session.post(self.__login_url, data=self.__login_data)
+        cookie_bbimloggedin = r.cookies.get('bbimloggedin', default='no')
+        if cookie_bbimloggedin == 'yes':
+            self.__session_started = True
+
     def parse_thread(self, thread_url):
         current_url = thread_url
         while current_url:
             current_page = self.__session.get(current_url)
             if current_page.status_code != requests.codes.ok:
                 break
-
+            if current_url == thread_url:
+                if self.check_private_thread(current_page, current_url):
+                    # tengo que actualizar current_page a un valor adecuado
+                    current_page = self.__session.get(current_url)
+                else:
+                    return
             soup = BeautifulSoup(current_page.text, features="html.parser")
             self.parse_thread_posts(soup)
+            self.parse_thread_name(soup)
             # busco el enlace a la página siguiente
             next_url = self.find_next(soup)
             if next_url:
                 current_url = self.__base_url + next_url
             else:
                 current_url = None
-        # parsing done
-        # for k, v in self.__video_dict.items():
-        #     print(k)
-        #     print(v)
-        #     print('----------------------------------------')
+
+    def parse_thread_name(self, soup):
+        if not self.__thread_name:
+            meta = soup.find('meta', {'name': 'description'})
+            self.__thread_name = meta['content']

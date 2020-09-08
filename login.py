@@ -35,9 +35,11 @@ logb2=Acceder
 
 
 def main():
+    login_url = ''
+    name_param = ''
     argv = sys.argv[1:]
     try:
-        opts, args = getopt.getopt(argv, 'u:p:l:s:')
+        opts, args = getopt.getopt(argv, 'u:p:l:s:n:')
         for (opt, value) in opts:
             if opt == "-u":
                 username = str(value)
@@ -47,6 +49,8 @@ def main():
                 login_url = str(value)
             elif opt == "-s":
                 start_page = str(value)
+            elif opt == "-n":
+                name_param = str(value)
     except ValueError as err:
         print(str(err))
         exit(-1)
@@ -75,7 +79,7 @@ def main():
 
     youtube = get_authenticated_service()
     try:
-        add_playlist(youtube, q)
+        add_playlist(youtube, q, name=name_param, description=parser.thread_name, url=start_page)
     except HttpError as e:
         print('An HTTP error %d occurred:\n%s' % (e.resp.status, e.content))
 
