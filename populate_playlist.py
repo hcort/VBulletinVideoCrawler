@@ -1,3 +1,5 @@
+import json
+
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -51,6 +53,7 @@ def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='un
 
     if not name:
         name = description
+    name = name.strip()
     body = dict(
         snippet=dict(
             title=name,
@@ -61,30 +64,47 @@ def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='un
         )
     )
 
-    # TODO check if playlist already exists
-    next_page = ''
-    create_list = True
-    while True:
-        mis_listas = youtube.playlists().list(part='id,snippet,status',
-                                              pageToken=next_page, mine=True).execute()
-        next_page = mis_listas.get('nextPageToken')
-        for lista_yt in mis_listas['items']:
-            if lista_yt['snippet'].get('title') == name:
-                create_list = False
-                playlist_id = lista_yt['snippet'].get('id')
+    try:
+        next_page = ''
+        create_list = True
+        while True:
+            mis_listas = youtube.playlists().list(part='id,snippet,status',
+                                                  pageToken=next_page, mine=True).execute()
+            next_page = mis_listas.get('nextPageToken')
+            for lista_yt in mis_listas['items']:
+                if lista_yt['snippet'].get('title') == name:
+                    create_list = False
+                    playlist_id = lista_yt['id']
+                    break
+            if not next_page:
                 break
-        if not next_page:
-            break
-    if create_list:
-        playlists_insert_response = youtube.playlists().insert(
-            part='snippet,status',
-            body=body
-        ).execute()
+        if create_list:
+            playlists_insert_response = youtube.playlists().insert(
+                part='snippet,status',
+                body=body
+            ).execute()
 
-        playlist_id = playlists_insert_response['id']
+            playlist_id = playlists_insert_response['id']
+    except HttpError as err:
+        print('Error creating playlist ' + name + '\n' + str(err) + '\n\n')
+        return
 
+    try:
+        next_page = ''
+        while True:
+            list_uploaded_videos = youtube.playlistItems().list(playlistId=playlist_id, part='snippet', pageToken=next_page).execute()
+            next_page = list_uploaded_videos.get('nextPageToken')
+            for lista_yt in list_uploaded_videos['items']:
+                # using part=snippet
+                video_id = lista_yt['snippet']['resourceId']['videoId']
+                popped_elem = vid_dict.pop(video_id, None)
+                if popped_elem:
+                    print('Video already in list: ' + video_id)
+            if not next_page:
+                break
+    except HttpError as err:
+        print('Error reading playlist ' + name + '\n' + str(err) + '\n\n')
 
-    # TODO read playlist and check for videos already uploaded?
     for video_id in vid_dict:
         # add_video_to_playlist(youtube, video_id, playlist_id)
         try:
@@ -103,25 +123,14 @@ def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='un
             ).execute()
             print(add_video_request)
         except HttpError as err:
-            print('Error al añadir ' + video_id + '\n' + str(err) + '\n\n')
+            print('Error adding video: ' + video_id + '\n' + str(err) + '\n\n')
+            err_as_json = json.loads(err.content)
+            error_list = err_as_json['error'].get('errors')
+            if error_list:
+                for insert_err in error_list:
+                    quota_error = (insert_err['reason'] == 'quotaExceeded')
+                    if quota_error:
+                        print('Daily quota exceeded - Finishing uploads')
+                        return
 
-    print('New playlist ID: %s' % playlists_insert_response['id'])
-
-
-if __name__ == '__main__':
-
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument('--title',
-    #                     default='Test Playlist',
-    #                     help='The title of the new playlist.')
-    # parser.add_argument('--description',
-    #                     default='A private playlist created with the YouTube Data API.',
-    #                     help='The description of the new playlist.')
-    #
-    # args = parser.parse_args()
-
-    youtube = get_authenticated_service()
-    try:
-        add_playlist(youtube)
-    except HttpError as e:
-        print('An HTTP error %d occurred:\n%s' % (e.resp.status, e.content))
+    print('All videos uploaded')

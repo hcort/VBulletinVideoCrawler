@@ -36,7 +36,10 @@ logb2=Acceder
 
 def main():
     login_url = ''
+    start_page = ''
     name_param = ''
+    username = ''
+    pwd = ''
     argv = sys.argv[1:]
     try:
         opts, args = getopt.getopt(argv, 'u:p:l:s:n:')
