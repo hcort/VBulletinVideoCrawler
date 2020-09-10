@@ -1,9 +1,9 @@
 # beautiful soup for HTML parsing
 import os
 import re
+import urllib.parse
 
 import requests
-import urllib.parse
 from bs4 import BeautifulSoup
 
 
@@ -23,6 +23,10 @@ class VBulletinVideoCrawler:
         self.__current_post_date = ''
         self.__current_post_author = ''
         self.__current_post_author_profile = ''
+        # README
+        # The standard Python dict does this by default if you're using CPython 3.6+
+        # (or Python 3.7+ for any other implementation of Python).
+        # On older versions of Python you can use collections.OrderedDict.
         self.__video_dict = {}
         self.__thread_name = ''
 
@@ -34,11 +38,12 @@ class VBulletinVideoCrawler:
     def thread_name(self):
         return self.__thread_name
 
-    def start_parsing(self, start_url):
+    def start_parsing(self, start_url, last_post = ''):
+        if not start_url:
+            print('No thread url defined')
+            return
         if not self.__session:
             self.__session = requests.Session()
-        self.__start_url = start_url
-        self.__page_number = '1'
         path = urllib.parse.urlparse(start_url)
         self.__base_url = path.scheme + '://' + path.netloc + '/'
         path_split = os.path.split(path.path)
@@ -47,6 +52,15 @@ class VBulletinVideoCrawler:
         m = regex_id.search(path.query)
         if m:
             self.__thread_id = m.group(1)
+        if last_post:
+            self.__start_url = start_url + '&' + last_post
+            regex_page = re.compile("page=([0-9]+)#")
+            m_pg = regex_page.search(last_post)
+            if m_pg:
+                self.__page_number = m_pg.group(1)
+        else:
+            self.__start_url = start_url
+            self.__page_number = '1'
         self.parse_thread(self.__start_url)
         return self.__video_dict
 
@@ -225,6 +239,7 @@ class VBulletinVideoCrawler:
             self.__session_started = True
 
     def parse_thread(self, thread_url):
+        self.__thread_name = ''
         current_url = thread_url
         while current_url:
             current_page = self.__session.get(current_url)
@@ -249,4 +264,9 @@ class VBulletinVideoCrawler:
     def parse_thread_name(self, soup):
         if not self.__thread_name:
             meta = soup.find('meta', {'name': 'description'})
-            self.__thread_name = meta['content']
+            description_str = meta['content']
+            if description_str.startswith(' '):
+                self.__thread_name = description_str.strip()
+            else:
+                # content="Página 21- JAZZ  LO-FI HIP HOP ,VAPORWAVE BEATS  [...] General"
+                self.__thread_name = description_str[len("Página 00- "):]

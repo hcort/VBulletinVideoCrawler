@@ -49,7 +49,7 @@ def add_video_to_playlist(youtube, videoID, playlistID):
 
 def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='unlisted'):
     if not vid_dict:
-        return
+        return ''
 
     if not name:
         name = description
@@ -87,7 +87,7 @@ def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='un
             playlist_id = playlists_insert_response['id']
     except HttpError as err:
         print('Error creating playlist ' + name + '\n' + str(err) + '\n\n')
-        return
+        return ''
 
     try:
         next_page = ''
@@ -104,6 +104,7 @@ def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='un
                 break
     except HttpError as err:
         print('Error reading playlist ' + name + '\n' + str(err) + '\n\n')
+        return ''
 
     for video_id in vid_dict:
         # add_video_to_playlist(youtube, video_id, playlist_id)
@@ -131,6 +132,7 @@ def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='un
                     quota_error = (insert_err['reason'] == 'quotaExceeded')
                     if quota_error:
                         print('Daily quota exceeded - Finishing uploads')
-                        return
+                        return video_id
 
     print('All videos uploaded')
+    return list(vid_dict.keys())[-1]
