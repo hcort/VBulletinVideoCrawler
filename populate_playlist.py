@@ -1,138 +1,85 @@
-import json
-
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-
-# The CLIENT_SECRETS_FILE variable specifies the name of a file that contains
-# the OAuth 2.0 information for this application, including its client_id and
-# client_secret. You can acquire an OAuth 2.0 client ID and client secret from
-# the {{ Google Cloud Console }} at
-# {{ https://cloud.google.com/console }}.
-# Please ensure that you have enabled the YouTube Data API for your project.
-# For more information about using OAuth2 to access the YouTube Data API, see:
-#   https://developers.google.com/youtube/v3/guides/authentication
-# For more information about the client_secrets.json file format, see:
-#   https://developers.google.com/api-client-library/python/guide/aaa_client_secrets
-
-CLIENT_SECRETS_FILE = 'client_secret.json'
-
-# This OAuth 2.0 access scope allows for full read/write access to the
-# authenticated user's account.
-SCOPES = ['https://www.googleapis.com/auth/youtube']
-API_SERVICE_NAME = 'youtube'
-API_VERSION = 'v3'
+from mongo_utils import fill_thread_data_playlist_name_id, refresh_pending_videos_document, refresh_thread_data
+from utils import extract_thread_modification_date, remove_videos_already_in_list, \
+    process_exception, get_error_names
+from youtube_calls import playlist_insert
 
 
-# Authorize the request and store authorization credentials.
-def get_authenticated_service():
-    flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
-    credentials = flow.run_console()
-    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
+def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None):
+    """
+    :param user_profile:
+    :param vid_dict:
+    :param playlist_id:
+    :return: True is quota has been reached, False otherwise
 
+    vid_dict is modified in this function
+    - remove_videos_already_in_list removes pending videos that were uploaded to the playlist before
+    - playlist_insert removes videos
 
-def add_video_to_playlist(youtube, videoID, playlistID):
-    add_video_request = youtube.playlistItem().insert(
-        part="snippet",
-        body={
-            'snippet': {
-                'playlistId': playlistID,
-                'resourceId': {
-                    'kind': 'youtube#video',
-                    'videoId': videoID
-                }
-                # 'position': 0
-            }
-        }
-    ).execute()
+    """
+    videos_inserted = 0
+    if not vid_dict or not playlist_id or not user_profile.has_quota:
+        return videos_inserted
 
+    remove_videos_already_in_list(user_profile, vid_dict, playlist_id)
 
-def add_playlist(youtube, vid_dict, name='', description='', url='', privacy='unlisted'):
-    if not vid_dict:
-        return ''
+    video_ids = list(vid_dict.keys())
+    added_videos = []
 
-    if not name:
-        name = description
-    name = name.strip()
-    body = dict(
-        snippet=dict(
-            title=name,
-            description='Playlist creada con VBulletinVideoCrawler.\n{}\n{}'.format(description, url)
-        ),
-        status=dict(
-            privacyStatus=privacy
-        )
-    )
+    print('Insertando ' + str(len(video_ids)) + ' videos en ' + playlist_id)
 
-    try:
-        next_page = ''
-        create_list = True
-        while True:
-            mis_listas = youtube.playlists().list(part='id,snippet,status',
-                                                  pageToken=next_page, mine=True).execute()
-            next_page = mis_listas.get('nextPageToken')
-            for lista_yt in mis_listas['items']:
-                if lista_yt['snippet'].get('title') == name:
-                    create_list = False
-                    playlist_id = lista_yt['id']
-                    break
-            if not next_page:
-                break
-        if create_list:
-            playlists_insert_response = youtube.playlists().insert(
-                part='snippet,status',
-                body=body
-            ).execute()
-
-            playlist_id = playlists_insert_response['id']
-    except HttpError as err:
-        print('Error creating playlist ' + name + '\n' + str(err) + '\n\n')
-        return ''
-
-    try:
-        next_page = ''
-        while True:
-            list_uploaded_videos = youtube.playlistItems().list(playlistId=playlist_id, part='snippet', pageToken=next_page).execute()
-            next_page = list_uploaded_videos.get('nextPageToken')
-            for lista_yt in list_uploaded_videos['items']:
-                # using part=snippet
-                video_id = lista_yt['snippet']['resourceId']['videoId']
-                popped_elem = vid_dict.pop(video_id, None)
-                if popped_elem:
-                    print('Video already in list: ' + video_id)
-            if not next_page:
-                break
-    except HttpError as err:
-        print('Error reading playlist ' + name + '\n' + str(err) + '\n\n')
-        return ''
-
-    for video_id in vid_dict:
-        # add_video_to_playlist(youtube, video_id, playlist_id)
+    for video_id in video_ids:
         try:
-            add_video_request = youtube.playlistItems().insert(
-                part="snippet",
-                body={
-                    'snippet': {
-                        'playlistId': playlist_id,
-                        'resourceId': {
-                            'kind': 'youtube#video',
-                            'videoId': video_id
-                        }
-                        # 'position': 0
-                    }
-                }
-            ).execute()
-            print(add_video_request)
+            insert_result = playlist_insert(playlist_id, video_id, user_profile.youtube)
+            added_videos.append(insert_result)
+            vid_dict.pop(video_id)
+            print('>>>>>>>>> ' + video_id + ' insertado correctamente')
         except HttpError as err:
-            print('Error adding video: ' + video_id + '\n' + str(err) + '\n\n')
-            err_as_json = json.loads(err.content)
-            error_list = err_as_json['error'].get('errors')
-            if error_list:
-                for insert_err in error_list:
-                    quota_error = (insert_err['reason'] == 'quotaExceeded')
-                    if quota_error:
-                        print('Daily quota exceeded - Finishing uploads')
-                        return video_id
-
+            process_exception(user_profile, err, custom_str='Error adding video: ' + video_id + '\n' + str(err.content))
+            error_names_list = get_error_names(err)
+            # remove video for some errors
+            if ('duplicate' in error_names_list) or ('playlistItemsNotAccessible' in error_names_list) or \
+                    ('videoNotFound' in error_names_list):
+                vid_dict.pop(video_id)
+        if not user_profile.has_quota:
+            break
+    if added_videos:
+        from mongo_utils import update_playlist_uploaded_videos
+        update_playlist_uploaded_videos(user_profile, added_videos, playlist_id)
     print('All videos uploaded')
-    return list(vid_dict.keys())[-1]
+    return videos_inserted
+
+
+def parse_thread_and_upload(user_profile, thread, parser):
+    if not user_profile.youtube:
+        return
+    last_post = thread.get('last_post', '')
+    # upload videos found in the thread
+    thread_url = user_profile.forum_base + 'showthread.php?t=' + thread['id']
+    # check last modification date
+    last_mod_date_bd = thread.get('last_mod_date', '')
+    last_mod_date = extract_thread_modification_date(user_profile, thread_url)
+    if last_mod_date_bd == last_mod_date:
+        return
+    else:
+        thread['last_mod_date'] = last_mod_date
+    videos_found = parser.start_parsing(thread_url, last_post)
+    if videos_found:
+        video_list = list(videos_found.keys())
+        try:
+            # check for playlist title and id
+            # TODO if I don't have playlist_id it means is not created yet
+            thread_data = fill_thread_data_playlist_name_id(thread_data=thread, user_profile=user_profile)
+            name_param = thread_data.get('playlist_title')
+            playlist_id = thread_data.get('playlist_id', None)
+            add_videos_to_playlist(user_profile=user_profile, vid_dict=videos_found, playlist_id=playlist_id)
+        except Exception as e:
+            print('An unknown error occurred:\n%s' % (str(e)))
+            return
+        # add remaining videos in videos_found to pending database
+        refresh_pending_videos_document(user_profile, thread, videos_found, append=True)
+        thread['last_post'] = parser.last_parsed_message
+    refresh_thread_data(user_profile, thread)
+
+
+
