@@ -86,9 +86,8 @@ class PendingVideosThread(Thread):
 
     def update_playlist_in_database(self, playlist_id, inserted_videos):
         # I need to lock this collection as the other thread reads it to remove duplicates
-        database = self.__user_profile.mongo['vBulletin']
         # update playlists_created: add videos and get new etag
-        playlist_in_db = database['playlists_created'].find_one({'id': playlist_id})
+        playlist_in_db = self.__user_profile.mongo_get_playlists_created_info(playlist_id)
         if not playlist_in_db:
             # what to do (?)
             threads_log.debug('Playlist ' + playlist_id + ' not found - Creating...')
@@ -105,24 +104,21 @@ class PendingVideosThread(Thread):
             threads_log.debug('Adding video ' + inserted_video['videoId'] + ' with etag = ' + inserted_video['etag'])
             if inserted_video['etag']:
                 playlist_in_db['videos'].append(inserted_video)
-        # read etag from playlist
-        database['playlists_created'].replace_one(filter={'id': playlist_id},
-                                                  replacement=playlist_in_db, upsert=True)
+        self.__user_profile.mongo_replace_playlists_created_item(playlist_id=playlist_id, replacement=playlist_in_db)
         threads_log.debug('Collection playlists_created updated')
         threads_log.debug('Playlist ' + playlist_id + ' has ' + str(len(playlist_in_db['videos'])) + 'videos')
 
     def update_pending_videos_collection(self, thread_id, inserted_videos):
         # i only remove videos in inserted_videos, as there may be some video in videos_to_insert that
         # couldn't be inserted due to some error and I will need to retry later
-        database = self.__user_profile.mongo['vBulletin']
-        pending_videos_from_thread = database['pending_videos'].find_one({'id': thread_id})
+        pending_videos_from_thread = self.__user_profile.mongo_get_pending_videos_info(thread_id)
         for inserted_video in inserted_videos:
             idx_video = get_video_index(inserted_video['videoId'], pending_videos_from_thread['videos'])
             threads_log.debug('Removing video ' + inserted_video['videoId'] + ' from pending. Index=' + str(idx_video))
             if idx_video >= 0:
                 pending_videos_from_thread['videos'].pop(idx_video)
-        database['pending_videos'].replace_one(filter={'id': thread_id},
-                                               replacement=pending_videos_from_thread, upsert=True)
+        self.user_profile.mongo_replace_pending_videos_item(
+            thread_id=thread_id, replacement=pending_videos_from_thread)
         threads_log.debug('Collection pending_videos updated')
         threads_log.debug('Thread ' + thread_id + ' has ' + str(len(pending_videos_from_thread['videos'])) +
                           'pending videos')
@@ -145,7 +141,6 @@ class PendingVideosThread(Thread):
         playlist_id = find_playlist_id(user_profile=self.__user_profile, thread_id=updated_thread_id)
         # the other thread may have put videos in pending list before they were uploaded
         threads_log.debug('Pending videos from playlist: ' + playlist_id)
-        num_videos = len(videos_to_insert)
         for video in videos_to_insert:
             threads_log.debug('Pending videos to insert: ' + str(video))
         duplicates = remove_videos_already_in_list(self.__user_profile,
@@ -233,7 +228,6 @@ class VBulletinParserThread(Thread):
             threads_log.debug('No new videos found in thread ' + thread['id'])
             return
         with self.__database_lock:
-            database = self.__user_profile.mongo['vBulletin']
             # check for duplicates
             # need to lock because I don't want to check while the other thread is updating
             threads_log.debug('Videos found in thread ' + thread['id'])
@@ -245,7 +239,7 @@ class VBulletinParserThread(Thread):
                 threads_log.debug('Some videos have been deleted as duplicates')
                 for duplicate in duplicates:
                     threads_log.debug(str(duplicate))
-            pending_videos_from_thread = database['pending_videos'].find_one({'id': thread['id']})
+            pending_videos_from_thread = self.__user_profile.mongo_get_pending_videos_info(thread['id'])
             if not pending_videos_from_thread:
                 pending_videos_from_thread = {
                     'id': thread['id'],
@@ -253,21 +247,19 @@ class VBulletinParserThread(Thread):
                 }
             for video_id in videos_found:
                 pending_videos_from_thread['videos'].append(videos_found[video_id])
-            database['pending_videos'].replace_one(filter={'id': thread['id']},
-                                                   replacement=pending_videos_from_thread, upsert=True)
+            self.__user_profile.mongo_replace_pending_videos_item(thread_id=thread['id'],
+                                                                  replacement=pending_videos_from_thread)
             threads_log.debug('Collection pending_videos has been updated')
             threads_log.debug('Thread ' + thread['id'] + ' has ' + str(len(pending_videos_from_thread['videos'])) +
                               'pending videos')
 
     def update_thread_in_db(self, thread):
         # no need to lock here, only this thread uses this collection
-        database = self.__user_profile.mongo['vBulletin']
-        database['video_threads'].replace_one(filter={'id': thread['id']},
-                                              replacement=thread, upsert=True)
+        self.__user_profile.mongo_replace_video_threads_item(thread_id=thread['id'], replacement=thread)
         threads_log.debug('Collection pending_videos has been updated')
 
 
-def main():
+def config_log():
     log_format = "%(asctime)s - %(levelname)s - %(threadName)s > [%(filename)s > %(funcName)s() > %(lineno)s]\t%(" \
                  "message)s "
     # logging.basicConfig(
@@ -290,8 +282,12 @@ def main():
 
     threads_log.info('Log started')
 
+
+def main():
+    config_log()
+
     user_profile = YoutubeProfile(fill_parser_data())
-    # update the playlists_created collection
+    # update the playlists_created collection before starting execution
     check_lists_for_updates(user_profile)
 
     lock = threading.Lock()

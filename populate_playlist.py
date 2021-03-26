@@ -1,5 +1,5 @@
 from googleapiclient.errors import HttpError
-from mongo_utils import fill_thread_data_playlist_name_id, refresh_pending_videos_document, refresh_thread_data
+from mongo_utils import fill_thread_data_playlist_name_id, refresh_pending_videos_document, replace_video_threads_item
 from utils import extract_thread_modification_date, remove_videos_already_in_list, \
     process_exception, get_error_names
 from youtube_calls import playlist_insert
@@ -21,12 +21,27 @@ def iterate_video_dict_and_insert(user_profile, playlist_id, vid_dict):
             if ('duplicate' in error_names_list) or ('playlistItemsNotAccessible' in error_names_list) or \
                     ('videoNotFound' in error_names_list):
                 vid_dict.pop(video_id)
+        except Exception as err:
+            # another kind of error I can't solve
+            process_exception(user_profile, err, custom_str='Error adding video: ' + video_id + '\n' + str(err.content))
+            break
         if not user_profile.has_quota:
             break
     return added_videos
 
 
-def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None):
+def add_videos_to_playlist_and_update_db(user_profile, thread, vid_dict=None, playlist_id=None,
+                                         append_pending_list=False):
+    added_videos = add_videos_to_playlist(user_profile,
+                                          vid_dict=vid_dict,
+                                          playlist_id=playlist_id)
+    if added_videos:
+        from mongo_utils import add_uploaded_videos_to_playlists_created
+        add_uploaded_videos_to_playlists_created(user_profile, added_videos, playlist_id)
+        refresh_pending_videos_document(user_profile, thread, vid_dict, append=append_pending_list)
+
+
+def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None, append_pending_list=False):
     """
     :param user_profile:
     :param vid_dict:
@@ -47,9 +62,6 @@ def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None):
     added_videos = iterate_video_dict_and_insert(user_profile=user_profile,
                                                  playlist_id=playlist_id,
                                                  vid_dict=vid_dict)
-    if added_videos:
-        from mongo_utils import add_uploaded_videos_to_playlists_created
-        add_uploaded_videos_to_playlists_created(user_profile, added_videos, playlist_id)
     print('All videos uploaded')
     return added_videos
 
@@ -67,25 +79,19 @@ def parse_thread_and_upload(user_profile, thread, parser):
         return
     else:
         thread['last_mod_date'] = last_mod_date
+    thread_data = thread
     videos_found = parser.start_parsing(thread_url, last_post)
     if videos_found:
         video_list = list(videos_found.keys())
         try:
-            # check for playlist title and id
-            # TODO if I don't have playlist_id it means is not created yet
             thread_data = fill_thread_data_playlist_name_id(thread_data=thread, user_profile=user_profile)
-            name_param = thread_data.get('playlist_title')
             playlist_id = thread_data.get('playlist_id', None)
-            inserted_videos = add_videos_to_playlist(user_profile=user_profile,
-                                                     vid_dict=videos_found,
-                                                     playlist_id=playlist_id)
+            add_videos_to_playlist_and_update_db(user_profile=user_profile,
+                                                 thread=thread_data,
+                                                 vid_dict=videos_found,
+                                                 playlist_id=playlist_id,
+                                                 append_pending_list=True)
         except Exception as e:
             print('An unknown error occurred:\n%s' % (str(e)))
-            return
-        # add remaining videos in videos_found to pending database
-        refresh_pending_videos_document(user_profile, thread, videos_found, append=True)
         thread['last_post'] = parser.last_parsed_message
-    refresh_thread_data(user_profile, thread)
-
-
-
+    user_profile.mongo_replace_video_threads_item(thread_id=thread_data['id'], replacement=thread_data)

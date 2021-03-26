@@ -111,10 +111,9 @@ def remove_videos_already_in_list(user_profile, vid_dict=None, playlist_id=''):
     if not playlist_id:
         return duplicates
     # don't check duplicates from youtube account, use mongodb to avoid wasting quota
-    database = user_profile.mongo['vBulletin']
-    playlist_id = database['playlists_created'].find_one({'id': playlist_id})
-    if playlist_id:
-        for video in playlist_id['videos']:
+    playlist = user_profile.mongo_get_playlists_created_info(playlist_id)
+    if playlist:
+        for video in playlist['videos']:
             popped_video = vid_dict.pop(video['videoId'], None)
             if popped_video:
                 duplicates.append(popped_video)

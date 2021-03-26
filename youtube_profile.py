@@ -70,3 +70,30 @@ class YoutubeProfile:
     def mongo_playlists_created_list(self):
         database = self.mongo['vBulletin']
         return list(database['playlists_created'].find())
+
+    def mongo_get_thread_info(self, thread_id):
+        database = self.mongo['vBulletin']
+        return database['video_threads'].find_one({'id': thread_id})
+
+    def mongo_get_playlists_created_info(self, playlist_id):
+        database = self.mongo['vBulletin']
+        return database['playlists_created'].find_one({'id': playlist_id})
+
+    def mongo_get_pending_videos_info(self, thread_id):
+        database = self.mongo['vBulletin']
+        return database['pending_videos'].find_one({'id': thread_id})
+
+    def mongo_replace_playlists_created_item(self, playlist_id, replacement):
+        database = self.mongo['vBulletin']
+        playlists_created = database['playlists_created']
+        playlists_created.replace_one(filter={'id': playlist_id}, replacement=replacement, upsert=True)
+
+    def mongo_replace_video_threads_item(self, thread_id, replacement):
+        database = self.mongo['vBulletin']
+        video_threads = database['video_threads']
+        video_threads.replace_one(filter={'id': thread_id}, replacement=replacement, upsert=True)
+
+    def mongo_replace_pending_videos_item(self, thread_id, replacement):
+        database = self.mongo['vBulletin']
+        pending_videos = database['pending_videos']
+        pending_videos.replace_one(filter={'id': thread_id}, replacement=replacement, upsert=True)
