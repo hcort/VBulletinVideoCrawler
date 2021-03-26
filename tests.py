@@ -3,6 +3,7 @@ import time
 from typing import Callable, TypeVar
 
 from utils import fill_parser_data
+from youtube_calls import playlist_insert
 from youtube_profile import YoutubeProfile
 
 T = TypeVar('T')
@@ -51,15 +52,25 @@ def read_playlists_from_user(user_profile):
     pass
 
 
-def main():
-    user_profile = YoutubeProfile(fill_parser_data())
+def test_error_values_playlistitems_insert(user_profile):
+    # duplicate video
+    try:
+        add_video_req = playlist_insert(playlist_id='PLDG0iEBKCgpZ5a8EbAnoLLguH0P8JVZok',
+                                        # video_id='hJ_HnbPTDWc',
+                                        video_id='6MVGhGdpdDI',
+                                        youtube=user_profile.youtube)
+    except Exception as err:
+        print(err)
+    pass
 
+
+def test_threads(user_profile):
     # read_playlists_from_user(user_profile)
+    # exponential_backoff_func(read_playlists_from_user, user_profile, sleep_time=1, max_backoffs=0)
     x = threading.Thread(target=exponential_backoff_func,
                          args=(read_playlists_from_user, user_profile),
                          kwargs={
                              'sleep_time': 1, 'max_backoffs': 0})
-    # exponential_backoff_func(read_playlists_from_user, user_profile, sleep_time=1, max_backoffs=0)
     y = threading.Thread(target=exponential_backoff_func,
                          args=(read_playlist_by_id, user_profile, 'PLDG0iEBKCgpZ5a8EbAnoLLguH0P8JVZok'),
                          kwargs={
@@ -68,6 +79,12 @@ def main():
     x.run()
     x.join()
     y.join()
+
+
+def main():
+    user_profile = YoutubeProfile(fill_parser_data())
+    # test_threads(user_profile)
+    test_error_values_playlistitems_insert(user_profile)
     pass
 
 

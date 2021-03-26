@@ -62,3 +62,11 @@ class YoutubeProfile:
     def mongo_thread_list(self):
         database = self.mongo['vBulletin']
         return list(database['video_threads'].find())
+
+    def mongo_pending_videos_list(self):
+        database = self.mongo['vBulletin']
+        return list(database['pending_videos'].find())
+
+    def mongo_playlists_created_list(self):
+        database = self.mongo['vBulletin']
+        return list(database['playlists_created'].find())

@@ -1,8 +1,20 @@
 import getopt
 import json
+import re
 import sys
 
 from parse_youtube_links import VBulletinVideoCrawler
+
+
+def convert_video_list_in_dict(video_list):
+    video_dict = {}
+    regex_id = re.compile("watch\?v=([^\"&?\\\/]{11})")
+    for item in video_list:
+        m = regex_id.search(item['url'])
+        if m:
+            video_id = m.group(1)
+            video_dict[video_id] = item
+    return video_dict
 
 
 def process_exception(user_profile, err, custom_str=''):
@@ -60,6 +72,14 @@ def fill_parser_data():
     return parser_data
 
 
+def extract_thread_id_from_url(thread_url):
+    regex_id = re.compile("watch\?v=([^\"&?\\\/]{11})")
+    m = regex_id.search(thread_url)
+    if m:
+        return m.group(1)
+    return ''
+
+
 def extract_thread_name(user_profile, thread_url):
     parser = VBulletinVideoCrawler(login_url=user_profile.forum_login_url,
                                    login_data=login_data_from_parser_data(user_profile.parser_data))
@@ -87,14 +107,18 @@ def is_quota_error(error_name_list):
 
 
 def remove_videos_already_in_list(user_profile, vid_dict=None, playlist_id=''):
+    duplicates = []
     if not playlist_id:
-        return
+        return duplicates
     # don't check duplicates from youtube account, use mongodb to avoid wasting quota
     database = user_profile.mongo['vBulletin']
     playlist_id = database['playlists_created'].find_one({'id': playlist_id})
     if playlist_id:
         for video in playlist_id['videos']:
-            vid_dict.pop(video['videoId'], None)
+            popped_video = vid_dict.pop(video['videoId'], None)
+            if popped_video:
+                duplicates.append(popped_video)
+    return duplicates
 
 
 def login_data_from_parser_data(parser_data):

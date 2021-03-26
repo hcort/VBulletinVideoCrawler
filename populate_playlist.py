@@ -5,35 +5,15 @@ from utils import extract_thread_modification_date, remove_videos_already_in_lis
 from youtube_calls import playlist_insert
 
 
-def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None):
-    """
-    :param user_profile:
-    :param vid_dict:
-    :param playlist_id:
-    :return: True is quota has been reached, False otherwise
-
-    vid_dict is modified in this function
-    - remove_videos_already_in_list removes pending videos that were uploaded to the playlist before
-    - playlist_insert removes videos
-
-    """
-    videos_inserted = 0
-    if not vid_dict or not playlist_id or not user_profile.has_quota:
-        return videos_inserted
-
-    remove_videos_already_in_list(user_profile, vid_dict, playlist_id)
-
-    video_ids = list(vid_dict.keys())
+def iterate_video_dict_and_insert(user_profile, playlist_id, vid_dict):
     added_videos = []
-
-    print('Insertando ' + str(len(video_ids)) + ' videos en ' + playlist_id)
-
+    video_ids = list(vid_dict.keys())
+    # print('Insertando ' + str(len(video_ids)) + ' videos en ' + playlist_id)
     for video_id in video_ids:
         try:
             insert_result = playlist_insert(playlist_id, video_id, user_profile.youtube)
             added_videos.append(insert_result)
             vid_dict.pop(video_id)
-            print('>>>>>>>>> ' + video_id + ' insertado correctamente')
         except HttpError as err:
             process_exception(user_profile, err, custom_str='Error adding video: ' + video_id + '\n' + str(err.content))
             error_names_list = get_error_names(err)
@@ -43,11 +23,35 @@ def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None):
                 vid_dict.pop(video_id)
         if not user_profile.has_quota:
             break
+    return added_videos
+
+
+def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None):
+    """
+    :param user_profile:
+    :param vid_dict:
+    :param playlist_id:
+    :return: a list of videos added to the playlist
+
+    vid_dict is modified in this function
+    - remove_videos_already_in_list removes pending videos that were uploaded to the playlist before
+    - playlist_insert removes videos
+    After execution only pending videos remain in vid_dict
+
+    """
+    if not vid_dict or not playlist_id or not user_profile.has_quota:
+        return []
+
+    remove_videos_already_in_list(user_profile, vid_dict, playlist_id)
+
+    added_videos = iterate_video_dict_and_insert(user_profile=user_profile,
+                                                 playlist_id=playlist_id,
+                                                 vid_dict=vid_dict)
     if added_videos:
-        from mongo_utils import update_playlist_uploaded_videos
-        update_playlist_uploaded_videos(user_profile, added_videos, playlist_id)
+        from mongo_utils import add_uploaded_videos_to_playlists_created
+        add_uploaded_videos_to_playlists_created(user_profile, added_videos, playlist_id)
     print('All videos uploaded')
-    return videos_inserted
+    return added_videos
 
 
 def parse_thread_and_upload(user_profile, thread, parser):
@@ -72,7 +76,9 @@ def parse_thread_and_upload(user_profile, thread, parser):
             thread_data = fill_thread_data_playlist_name_id(thread_data=thread, user_profile=user_profile)
             name_param = thread_data.get('playlist_title')
             playlist_id = thread_data.get('playlist_id', None)
-            add_videos_to_playlist(user_profile=user_profile, vid_dict=videos_found, playlist_id=playlist_id)
+            inserted_videos = add_videos_to_playlist(user_profile=user_profile,
+                                                     vid_dict=videos_found,
+                                                     playlist_id=playlist_id)
         except Exception as e:
             print('An unknown error occurred:\n%s' % (str(e)))
             return

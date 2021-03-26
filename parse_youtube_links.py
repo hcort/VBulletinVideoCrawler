@@ -46,10 +46,16 @@ class VBulletinVideoCrawler:
     def last_parsed_message(self):
         return self.__last_message_parsed
 
-    def check_thread_is_updated(self, thread_url, last_mod_date):
-        if self.__last_modified_date:
+    def check_thread_is_updated(self, thread_url, last_mod_date_from_db):
+        """
+
+        :param thread_url:
+        :param last_mod_date_from_db:  if empty it means thread was not parsed before
+        :return: True if we detect last modified date of thread is not the same as the one stored in db
+        """
+        if not self.__last_modified_date:
             self.get_thread_name_from_url(thread_url)
-        return (last_mod_date != '') and (self.__last_modified_date != last_mod_date)
+        return (not last_mod_date_from_db) or (self.__last_modified_date != last_mod_date_from_db)
 
     def _get_soup_from_url(self, url):
         if not self.__session:
@@ -99,7 +105,7 @@ class VBulletinVideoCrawler:
         else:
             self.__start_url = start_url
             self.__page_number = '1'
-        if self.check_thread_is_updated(thread_url=start_url, last_mod_date=last_mod_date):
+        if self.check_thread_is_updated(thread_url=start_url, last_mod_date_from_db=last_mod_date):
             self.parse_thread(self.__start_url)
         self.__last_message_parsed = self.__current_post_offset
         return self.__video_dict

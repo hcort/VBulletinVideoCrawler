@@ -2,7 +2,7 @@ from utils import extract_thread_name
 from youtube_calls import get_videos_from_playlist, read_etags_from_playlists, create_playlist
 
 
-def update_playlist_uploaded_videos(user_profile, added_videos, playlist_id):
+def add_uploaded_videos_to_playlists_created(user_profile, added_videos, playlist_id):
     # check for new etag
     etag = read_etags_from_playlists(user_profile, playlist_id)
     if not etag:
@@ -18,6 +18,15 @@ def update_playlist_uploaded_videos(user_profile, added_videos, playlist_id):
             'etag': ''
         })
     created_lists.replace_one(filter={'id': playlist_id}, replacement=playlist_in_db, upsert=True)
+
+
+def get_playlist_id_from_thread_id(user_profile, thread_id):
+    database = user_profile.mongo['vBulletin']
+    video_thread = database['video_threads']
+    thread = video_thread.find_one({'id': thread_id})
+    if thread:
+        return thread['playlist_id']
+    return ''
 
 
 def refresh_thread_data(user_profile, thread):
@@ -79,6 +88,29 @@ def refresh_pending_videos_document(user_profile, thread, videos_found, append=F
     pending_videos.replace_one(filter={'id': thread['id']}, replacement=pending_videos_doc, upsert=True)
 
 
+def create_thread_in_pending_videos(user_profile, thread_data, force_creation=False):
+    database = user_profile.mongo['vBulletin']
+    if force_creation or (not database['pending_videos'].find_one({'id': thread_data['id']})):
+        database['pending_videos'].replace_on(filter={'id': thread_data['id']},
+                                              replacement={
+                                                  'id': thread_data['id'],
+                                                  'videos': []
+                                              }, upsert=True)
+
+
+def create_playlist_in_created_playlists(user_profile, thread_data, force_creation=False):
+    if not thread_data['playlist_id']:
+        return
+    database = user_profile.mongo['vBulletin']
+    if force_creation or (not database['playlists_created'].find_one({'id': thread_data['playlist_id']})):
+        database['playlists_created'].replace_on(filter={'id': thread_data['playlist_id']},
+                                                 replacement={
+                                                     'id': thread_data['playlist_id'],
+                                                     'etag': '',  # FIXME maybe get etag from create_playlist (?
+                                                     'videos': []
+                                                 }, upsert=True)
+
+
 def fill_thread_data_playlist_name_id(thread_data, user_profile):
     # check if thread data misses playlist name or playlist id
     update_mongo = False
@@ -98,5 +130,7 @@ def fill_thread_data_playlist_name_id(thread_data, user_profile):
         database = user_profile.mongo['vBulletin']
         all_threads_mongo = database['video_threads']
         all_threads_mongo.replace_one(filter={'id': thread_data['id']}, replacement=thread_data)
+        # check if the playlist exists in playlists_created and pending_videos. if not, create them
+        create_thread_in_pending_videos(user_profile=user_profile, thread_data=thread_data)
+        create_playlist_in_created_playlists(user_profile=user_profile, thread_data=thread_data)
     return thread_data
-
