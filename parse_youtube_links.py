@@ -8,6 +8,16 @@ import requests
 from bs4 import BeautifulSoup
 
 
+def get_page_number_from_url(last_post):
+    if not last_post:
+        return ''
+    regex_page = re.compile("page=([0-9]{1,2})")
+    m_pg = regex_page.search(last_post)
+    if m_pg:
+        return m_pg.group(1)
+    return ''
+
+
 class VBulletinVideoCrawler:
 
     def __init__(self, login_url='', login_data={}):
@@ -98,10 +108,7 @@ class VBulletinVideoCrawler:
             self.__thread_id = m.group(1)
         if last_post:
             self.__start_url = start_url + '&' + last_post
-            regex_page = re.compile("page=([0-9]+)#")
-            m_pg = regex_page.search(last_post)
-            if m_pg:
-                self.__page_number = m_pg.group(1)
+            self.__page_number = get_page_number_from_url(last_post)
         else:
             self.__start_url = start_url
             self.__page_number = '1'
@@ -130,6 +137,7 @@ class VBulletinVideoCrawler:
 
     def add_video_by_id(self, vid_id):
         # check embed
+        # FIXME best store just video id and not URL. youtube api works with ids and I have to extract it again
         vid_url = 'https://www.youtube.com/watch?v=' + vid_id
         video_info = {
             'url': vid_url,
@@ -161,15 +169,18 @@ class VBulletinVideoCrawler:
         pagenav_div = soup.find_all("div", class_="pagenav")
         for div in pagenav_div:
             lista_paginas = div.findChildren("td", class_="alt1", recursive=True)
-            for pagina in lista_paginas:
+            # next link is usually second to last (but not always)
+            for pagina in reversed(lista_paginas):
                 pag_sig = pagina.find("a", {"rel": "next"})
                 if pag_sig:
                     next_url = pag_sig.get('href')
-                    regex_id = re.compile("page=([0-9]+)")
-                    m = regex_id.search(next_url)
-                    if m:
-                        self.__page_number = m.group(1)
-                    return next_url
+                    next_page_number = get_page_number_from_url(next_url)
+                    # vBulletin error: sometimes "Next" link returns current URL -> infinite loop
+                    if next_page_number and (next_page_number != self.__page_number):
+                        self.__page_number = next_page_number
+                        return self.__base_url + next_url
+                    else:
+                        return None
         return None
 
     def parse_post_children_youtube_iframe(self, content_div):
@@ -191,7 +202,7 @@ class VBulletinVideoCrawler:
             return
         for div in div_children_embedded_yt:
             # find child with <div class ="video-youtube" align="center" >
-            video_div = div.find_all('div', class_="video-youtube")
+            video_div = div.find('div', class_="video-youtube")
             if video_div:
                 yt_iframe = video_div.find('iframe', class_="youtube-player", recursive=True)
                 video_link = yt_iframe.get('src')
@@ -216,13 +227,13 @@ class VBulletinVideoCrawler:
         for yt_link in div_children_yt_link:
             self.add_video_by_url(yt_link.get('href'))
 
-    def parse_post_date_number(self, post_table):
-        # thead items contain date and post sequence number
-        thead = post_table.find_all('td', class_='thead', recursive=True)
-        if len(thead) >= 2:
-            self.__current_post_date = thead[0].text.strip()
-            self.__current_post_number = thead[1].text.strip()
-            # print('Post #' + num_post + '\Fecha: ' + fecha)
+    def parse_post_date_number(self, post_table, post_id):
+        link_to_post_num = post_table.find('a', id='postcount'+post_id)
+        if link_to_post_num:
+            self.__current_post_number = '#' + link_to_post_num.get('name', '')
+        first_thead = post_table.find('td', class_='thead')
+        if first_thead:
+            self.__current_post_date = first_thead.text.strip()
 
     def parse_post_author(self, post_table):
         # <a class="bigusername" href="member.php?u=012345">user_name</a>
@@ -247,7 +258,7 @@ class VBulletinVideoCrawler:
     def parse_thread_posts(self, current_url, soup):
         # if current_url contains &page=XX#post123456789 i can skip several posts
         skip_limit = ''
-        if current_url.find('&page='):
+        if current_url.find('&page=') != -1:
             skip_regex = re.compile('#post([0-9]+)')
             m = skip_regex.search(current_url)
             if m:
@@ -256,19 +267,19 @@ class VBulletinVideoCrawler:
         all_posts = soup.find_all('div', id=regex_id, recursive=True)
         for post in all_posts:
             self.init_post()
-            m = regex_id.search(post.get('id'))
-            if m:
-                id_post = m.group(1)
-                if skip_limit and (id_post != skip_limit):
+            p_id = post.get('id', '')
+            if not p_id:
+                continue
+            id_post = p_id[-9:]
+            if skip_limit:
+                if id_post != skip_limit:
                     continue
-                if id_post == skip_limit:
+                else:
                     skip_limit = ''
-                    continue
-                post_table = post.find('table', {'id': 'post' + id_post})
-                if not post_table:
-                    return
+            post_table = post.find('table', {'id': 'post' + id_post})
+            if post_table:
                 self.format_post_url(id_post)
-                self.parse_post_date_number(post_table)
+                self.parse_post_date_number(post_table, id_post)
                 self.parse_post_author(post_table)
                 content_div = post_table.find('td', {'id': 'td_post_' + id_post})
                 if not content_div:
@@ -311,15 +322,15 @@ class VBulletinVideoCrawler:
                     current_page = self.__session.get(current_url)
                 else:
                     return
+            # SoupStrainer
+            # https://www.crummy.com/software/BeautifulSoup/bs4/doc/#parsing-only-part-of-a-document
+            # only_tags_with_id_link2 = SoupStrainer(id="link2")
+            # -> <div id="edit152255703" style="padding:0px 0px 5px 0px">
             soup = BeautifulSoup(current_page.text, features="html.parser")
             self.parse_thread_name_and_modified_date(soup)
             self.parse_thread_posts(current_url, soup)
             # busco el enlace a la página siguiente
-            next_url = self.find_next(soup)
-            if next_url:
-                current_url = self.__base_url + next_url
-            else:
-                current_url = None
+            current_url = self.find_next(soup)
 
     # def parse_thread_name(self, soup):
     #     if not self.__thread_name:
@@ -332,6 +343,8 @@ class VBulletinVideoCrawler:
     #             self.__thread_name = description_str[len("Página 00- "):]
 
     def parse_thread_name_and_modified_date(self, current_page):
+        if self.__last_modified_date and self.__thread_name:
+            return
         all_script_data = current_page.find_all('script', {'type': 'application/ld+json'})
         for data in all_script_data:
             data_as_json = json.loads(data.string)
