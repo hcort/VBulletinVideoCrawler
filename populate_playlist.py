@@ -1,5 +1,5 @@
 from googleapiclient.errors import HttpError
-from mongo_utils import fill_thread_data_playlist_name_id, refresh_pending_videos_document, replace_video_threads_item
+from mongo_utils import fill_thread_data_playlist_name_id, refresh_pending_videos_document
 from utils import extract_thread_modification_date, remove_videos_already_in_list, \
     process_exception, get_error_names
 from youtube_calls import playlist_insert
@@ -38,7 +38,10 @@ def add_videos_to_playlist_and_update_db(user_profile, thread, vid_dict=None, pl
     if added_videos:
         from mongo_utils import add_uploaded_videos_to_playlists_created
         add_uploaded_videos_to_playlists_created(user_profile, added_videos, playlist_id)
-        refresh_pending_videos_document(user_profile, thread, vid_dict, append=append_pending_list)
+        refresh_pending_videos_document(user_profile,
+                                        thread_id=thread['id'],
+                                        videos_found=vid_dict,
+                                        append=append_pending_list)
 
 
 def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None, append_pending_list=False):
@@ -66,23 +69,8 @@ def add_videos_to_playlist(user_profile, vid_dict=None, playlist_id=None, append
     return added_videos
 
 
-def parse_thread_and_upload(user_profile, thread, parser):
-    if not user_profile.youtube:
-        return
-    last_post = thread.get('last_post', '')
-    # upload videos found in the thread
-    thread_url = user_profile.forum_base + 'showthread.php?t=' + thread['id']
-    # check last modification date
-    last_mod_date_bd = thread.get('last_mod_date', '')
-    last_mod_date = extract_thread_modification_date(user_profile, thread_url)
-    if last_mod_date_bd == last_mod_date:
-        return
-    else:
-        thread['last_mod_date'] = last_mod_date
-    thread_data = thread
-    videos_found = parser.start_parsing(thread_url, last_post)
+def upload_video_dict_and_update_bd(user_profile, thread, videos_found):
     if videos_found:
-        video_list = list(videos_found.keys())
         try:
             thread_data = fill_thread_data_playlist_name_id(thread_data=thread, user_profile=user_profile)
             playlist_id = thread_data.get('playlist_id', None)
@@ -93,5 +81,16 @@ def parse_thread_and_upload(user_profile, thread, parser):
                                                  append_pending_list=True)
         except Exception as e:
             print('An unknown error occurred:\n%s' % (str(e)))
-        thread['last_post'] = parser.last_parsed_message
-    user_profile.mongo_replace_video_threads_item(thread_id=thread_data['id'], replacement=thread_data)
+
+
+def parse_thread_and_upload(user_profile, thread, parser):
+    if not user_profile.youtube:
+        return
+    last_post = thread.get('last_post', '')
+    # upload videos found in the thread
+    thread_url = user_profile.forum_base + 'showthread.php?t=' + thread['id']
+    videos_found = parser.start_parsing(thread_url, last_post, last_mod_date=thread.get('last_mod_date', ''))
+    upload_video_dict_and_update_bd(user_profile=user_profile, thread=thread, videos_found=videos_found)
+    thread['last_post'] = parser.last_parsed_message
+    thread['last_mod_date'] = parser.get_last_modification_date()
+    user_profile.mongo_replace_video_threads_item(thread_id=thread['id'], replacement=thread)

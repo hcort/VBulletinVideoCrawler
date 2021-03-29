@@ -10,9 +10,9 @@ from threading import Thread
 
 from googleapiclient.errors import HttpError
 
-from mongo_utils import check_lists_for_updates
+from mongo_utils import check_lists_for_updates, purge_duplicates_from_pending_videos
 from parse_youtube_links import VBulletinVideoCrawler
-from pending_videos import find_playlist_id
+from pending_videos import find_playlist_id_create_if_not_found
 from utils import extract_thread_id_from_url, process_exception, get_error_names, fill_parser_data, \
     login_data_from_parser_data, extract_thread_modification_date, remove_videos_already_in_list, \
     convert_video_list_in_dict
@@ -53,7 +53,7 @@ class PendingVideosThread(Thread):
     def run(self):
         while self.running:
             inserted_videos = self.insert_pending_videos_from_database()
-            time.sleep(SLEEP_TIME_ONE_VIDEO * inserted_videos)
+            time.sleep(SLEEP_TIME_ONE_VIDEO * NUM_VIDEOS_INSERT_OP)
 
     def insert_videos(self, video_list, playlist_id):
         if not video_list:
@@ -82,6 +82,8 @@ class PendingVideosThread(Thread):
                 if ('videoAlreadyInPlaylist' in error_names_list) or ('videoNotFound' in error_names_list):
                     inserted_videos.append({'videoId': video_id, 'etag': ''})
                     threads_log.debug('Error adding video: ' + video_id + '. Video can be removed from pending list')
+                if not self.__user_profile.has_quota:
+                    break
         return inserted_videos
 
     def update_playlist_in_database(self, playlist_id, inserted_videos):
@@ -90,15 +92,18 @@ class PendingVideosThread(Thread):
         playlist_in_db = self.__user_profile.mongo_get_playlists_created_info(playlist_id)
         if not playlist_in_db:
             # what to do (?)
-            threads_log.debug('Playlist ' + playlist_id + ' not found - Creating...')
+            threads_log.debug('Playlist ' + playlist_id + ' not found in db - Creating...')
             playlist_in_db = {
                 'id': playlist_id,
                 'videos': [],
                 'etag': ''
             }
         etag = read_etags_from_playlists(self.__user_profile, playlist_id=playlist_id)
-        playlist_in_db['etag'] = etag[0]['playlist_etag']
+        if etag:
+            playlist_in_db['etag'] = etag[0]['playlist_etag']
         # check if I need to refresh the playlist
+        # FIXME list comprenhension -> I lose some info I'd like to log
+        # correctly_inserted_videos = [x for x in inserted_videos if x['etag']]
         for inserted_video in inserted_videos:
             threads_log.debug('Adding video ' + inserted_video['videoId'] + ' to playlist ' + playlist_id)
             threads_log.debug('Adding video ' + inserted_video['videoId'] + ' with etag = ' + inserted_video['etag'])
@@ -117,7 +122,7 @@ class PendingVideosThread(Thread):
             threads_log.debug('Removing video ' + inserted_video['videoId'] + ' from pending. Index=' + str(idx_video))
             if idx_video >= 0:
                 pending_videos_from_thread['videos'].pop(idx_video)
-        self.user_profile.mongo_replace_pending_videos_item(
+        self.__user_profile.mongo_replace_pending_videos_item(
             thread_id=thread_id, replacement=pending_videos_from_thread)
         threads_log.debug('Collection pending_videos updated')
         threads_log.debug('Thread ' + thread_id + ' has ' + str(len(pending_videos_from_thread['videos'])) +
@@ -129,6 +134,26 @@ class PendingVideosThread(Thread):
             self.update_pending_videos_collection(thread_id, inserted_videos)
             self.update_playlist_in_database(playlist_id, inserted_videos)
 
+    def remove_duplicates_from_pending(self, thread_id, duplicates):
+        if duplicates:
+            with self.__database_lock:
+                pending_videos_from_thread = self.__user_profile.mongo_get_pending_videos_info(thread_id)
+                threads_log.debug('Some videos have been deleted [duplicates] - New list')
+                for duplicate in duplicates:
+                    # get video id from url
+                    item_id_from_url = duplicate['url'][-11:]
+                    threads_log.debug('Duplicates: ' + str(duplicate))
+                    idx_video = get_video_index(item_id_from_url, pending_videos_from_thread['videos'])
+                    threads_log.debug(
+                        'Removing video ' + item_id_from_url + ' from pending. Index=' + str(idx_video))
+                    if idx_video >= 0:
+                        pending_videos_from_thread['videos'].pop(idx_video)
+                self.__user_profile.mongo_replace_pending_videos_item(thread_id=thread_id,
+                                                                      replacement=pending_videos_from_thread)
+                threads_log.debug('Collection pending_videos updated')
+                threads_log.debug('Thread ' + thread_id + ' has ' + str(len(pending_videos_from_thread['videos'])) +
+                                  'pending videos')
+
     def process_pending_videos_from_thread(self, pending_list):
         video_list = pending_list.get('videos', [])
         threads_log.debug('Check pending video list from thread ' + pending_list['id'] +
@@ -138,19 +163,17 @@ class PendingVideosThread(Thread):
             return []
         videos_to_insert = video_list[:NUM_VIDEOS_INSERT_OP]
         updated_thread_id = pending_list['id']
-        playlist_id = find_playlist_id(user_profile=self.__user_profile, thread_id=updated_thread_id)
+        playlist_id = find_playlist_id_create_if_not_found(user_profile=self.__user_profile, thread_id=updated_thread_id)
         # the other thread may have put videos in pending list before they were uploaded
         threads_log.debug('Pending videos from playlist: ' + playlist_id)
         for video in videos_to_insert:
             threads_log.debug('Pending videos to insert: ' + str(video))
+        vid_dict = convert_video_list_in_dict(videos_to_insert)
         duplicates = remove_videos_already_in_list(self.__user_profile,
-                                                   vid_dict=convert_video_list_in_dict(videos_to_insert),
+                                                   vid_dict=vid_dict,
                                                    playlist_id=playlist_id)
-        if duplicates:
-            threads_log.debug('Some videos have been deleted [duplicates] - New list')
-            for duplicate in duplicates:
-                threads_log.debug('Duplicates: ' + str(duplicate))
-        return self.insert_videos(videos_to_insert, playlist_id)
+        self.remove_duplicates_from_pending(updated_thread_id, duplicates)
+        return self.insert_videos(vid_dict, playlist_id)
 
     def insert_pending_videos_from_database(self):
         # read NUM_VIDEOS_INSERT_OP from database and try to insert them
@@ -163,7 +186,11 @@ class PendingVideosThread(Thread):
             inserted_videos = self.process_pending_videos_from_thread(pending_list)
             if inserted_videos:
                 updated_thread_id = pending_list['id']
-                playlist_id = find_playlist_id(user_profile=self.__user_profile, thread_id=updated_thread_id)
+                playlist_id = find_playlist_id_create_if_not_found(user_profile=self.__user_profile,
+                                                                   thread_id=updated_thread_id)
+                break
+            if not self.__user_profile.has_quota:
+                threads_log.debug('API quota limit reached-------------------------')
                 break
         if not playlist_id or not inserted_videos:
             # this means pending_videos is empty
@@ -235,6 +262,7 @@ class VBulletinParserThread(Thread):
                 threads_log.debug(str(videos_found[video]))
             duplicates = remove_videos_already_in_list(self.__user_profile, vid_dict=videos_found,
                                                        playlist_id=thread['playlist_id'])
+            # FIXME remove duplicates from pending list
             if duplicates:
                 threads_log.debug('Some videos have been deleted as duplicates')
                 for duplicate in duplicates:
@@ -288,6 +316,7 @@ def main():
 
     user_profile = YoutubeProfile(fill_parser_data())
     # update the playlists_created collection before starting execution
+    purge_duplicates_from_pending_videos(user_profile)
     check_lists_for_updates(user_profile)
 
     lock = threading.Lock()

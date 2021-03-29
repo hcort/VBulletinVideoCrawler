@@ -1,4 +1,5 @@
-from utils import extract_thread_name
+from utils import extract_thread_name, convert_video_list_in_dict, remove_videos_already_in_list, \
+    find_playlist_from_thread_id
 from youtube_calls import get_videos_from_playlist, read_etags_from_playlists, create_playlist
 
 
@@ -9,6 +10,7 @@ def add_uploaded_videos_to_playlists_created(user_profile, added_videos, playlis
         return
     playlist_in_db = user_profile.mongo_get_playlists_created_info(playlist_id)
     playlist_in_db['eTag'] = etag[0]['playlist_etag']
+    # FIXME this videos should have an etag
     for video in added_videos:
         playlist_in_db['videos'].append({
             'videoId': video['id'],
@@ -52,22 +54,33 @@ def read_playlist_items_and_update_db(user_profile, playlist):
     user_profile.mongo_replace_playlists_created_item(playlist_id=playlist['playlist_id'], replacement=json_object)
 
 
-def refresh_pending_videos_document(user_profile, thread, videos_found, append=False):
+def refresh_pending_videos_document(user_profile, thread_id, videos_found, append=False):
     # two kinds of "updates"
     #   -> after processing pending list, I can ignore the previous list
     #   -> after parsing a thread, I should append the new pending videos to the existing list
     if append:
-        previous_list = user_profile.mongo_get_pending_videos_info(thread['id'])
+        previous_list = user_profile.mongo_get_pending_videos_info(thread_id)
         pending_videos_doc = {
-            'id': thread['id'],
+            'id': thread_id,
             'videos': (previous_list['videos'] if previous_list else []) + list(videos_found.values())
         }
     else:
         pending_videos_doc = {
-            'id': thread['id'],
+            'id': thread_id,
             'videos': list(videos_found.values())
         }
-    user_profile.mongo_replace_pending_videos_item(thread_id=thread['id'], replacement=pending_videos_doc)
+    user_profile.mongo_replace_pending_videos_item(thread_id=thread_id, replacement=pending_videos_doc)
+
+
+def purge_duplicates_from_pending_videos(user_profile):
+    pending_videos = user_profile.mongo_pending_videos_list()
+    for pending_video in pending_videos:
+        vid_dict_pending = convert_video_list_in_dict(pending_video['videos'])
+        # get playlist from thread id
+        playlist_id = find_playlist_from_thread_id(user_profile=user_profile, thread_id=pending_video['id'])
+        duplicates = remove_videos_already_in_list(user_profile, vid_dict=vid_dict_pending, playlist_id=playlist_id)
+        pending_video['videos'] = list(vid_dict_pending.values())
+        user_profile.mongo_replace_pending_videos_item(thread_id=pending_video['id'], replacement=pending_video)
 
 
 def create_thread_in_pending_videos(user_profile, thread_data, force_creation=False):

@@ -17,6 +17,13 @@ def convert_video_list_in_dict(video_list):
     return video_dict
 
 
+def convert_video_list_in_dict_etags(video_list):
+    video_dict = {}
+    for item in video_list:
+        video_dict[item['videoId']] = item['etag']
+    return video_dict
+
+
 def process_exception(user_profile, err, custom_str=''):
     if custom_str:
         print(custom_str)
@@ -80,6 +87,13 @@ def extract_thread_id_from_url(thread_url):
     return ''
 
 
+def find_playlist_from_thread_id(user_profile, thread_id):
+    thread_data = user_profile.mongo_get_thread_info(thread_id)
+    if not thread_data:
+        return None
+    return thread_data.get('playlist_id', None)
+
+
 def extract_thread_name(user_profile, thread_url):
     parser = VBulletinVideoCrawler(login_url=user_profile.forum_login_url,
                                    login_data=login_data_from_parser_data(user_profile.parser_data))
@@ -113,10 +127,14 @@ def remove_videos_already_in_list(user_profile, vid_dict=None, playlist_id=''):
     # don't check duplicates from youtube account, use mongodb to avoid wasting quota
     playlist = user_profile.mongo_get_playlists_created_info(playlist_id)
     if playlist:
-        for video in playlist['videos']:
-            popped_video = vid_dict.pop(video['videoId'], None)
+        vid_dict_playlist = convert_video_list_in_dict_etags(playlist['videos'])
+        # playlist['videos'] is a list
+        video_keys = list(vid_dict.keys())
+        for video_key in video_keys:
+            popped_video = vid_dict_playlist.get(video_key, None)
             if popped_video:
                 duplicates.append(popped_video)
+                vid_dict.pop(video_key)
     return duplicates
 
 

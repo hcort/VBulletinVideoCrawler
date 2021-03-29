@@ -84,7 +84,7 @@ def test_threads(user_profile):
 def main():
     user_profile = YoutubeProfile(fill_parser_data())
     # test_threads(user_profile)
-    test_error_values_playlistitems_insert(user_profile)
+    # test_error_values_playlistitems_insert(user_profile)
     pass
 
 
