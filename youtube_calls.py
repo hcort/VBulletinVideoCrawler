@@ -1,5 +1,8 @@
+import os
+
+import google_auth_oauthlib
+import googleapiclient
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from utils import process_exception
 
@@ -23,11 +26,33 @@ API_SERVICE_NAME = 'youtube'
 API_VERSION = 'v3'
 
 
+def get_flow_from_file():
+    return google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE, scopes=SCOPES)
+
+
+def get_flow_from_env():
+    custom_json_cfg = {
+            'web': {
+                'client_id': os.environ['VBULLETIN_OAUTH_CLIENT_ID'],
+                'client_secret': os.environ['VBULLETIN_OAUTH_CLIENT_SECRET'],
+                'redirect_uris': [],
+                'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+                'token_uri': 'https://accounts.google.com/o/oauth2/token'
+            }
+        }
+    # flow =
+    return google_auth_oauthlib.flow.Flow.from_client_config(custom_json_cfg, scopes=SCOPES)
+
+
 # Authorize the request and store authorization credentials.
 def get_authenticated_service():
-    flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+    if os.environ.get('VBULLETIN_OAUTH_SOURCE', '') == 'env':
+        flow = get_flow_from_env()
+    else:
+        flow = get_flow_from_file()
     credentials = flow.run_console()
-    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
+    return googleapiclient.discovery.build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
 
 def video_description(description='', url=''):

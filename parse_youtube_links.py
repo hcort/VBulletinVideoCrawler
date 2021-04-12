@@ -79,7 +79,7 @@ class VBulletinVideoCrawler:
         soup = BeautifulSoup(current_page.text, features="html.parser")
         return soup
 
-    def get_last_modification_date(self, url):
+    def get_last_modification_date(self, url=''):
         if self.__last_modified_date:
             return self.__last_modified_date
         self.parse_thread_name_and_modified_date(self._get_soup_from_url(url))

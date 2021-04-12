@@ -1,0 +1,49 @@
+{%  block css_head %}
+    <style type="text/css">
+    {%  if file_upload %}
+    .ne {
+        background: cornflowerblue;
+    }
+    {% endif %}
+    .nw {
+        background: darkseagreen;
+    }
+    .rm {
+        background: darksalmon;
+    }
+    .par {
+        background: ghostwhite;
+    }
+    .impar {
+        background: lightgrey;
+    }
+    .error {
+        background: lightcoral;
+    }
+    </style>
+{% endblock %}
+
+{% extends 'base.html' %}
+
+{% block header %}
+  <h1>{% block title %}Log In{% endblock %}</h1>
+{% endblock %}
+
+{% block content %}
+    {% block formulario %}
+        <form method=post enctype=multipart/form-data>
+            <h1>Introducir datos necesarios</h1>
+            <div>
+                <label for="mongouser">Usuario de mongodb atlas</label>
+                <input name="mongouser" id="mongouser" required>
+            </div>
+            <div>
+                <label for="mongopassword">Contraseña de mongodb atlas</label>
+                <input name="mongopassword" id="mongopassword" required>
+            </div>
+            <div>
+                <input type=submit value="Insertar vídeo en playlist">
+            </div>
+      </form>
+    {% endblock %}
+{% endblock %}

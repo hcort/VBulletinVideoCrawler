@@ -1,0 +1,63 @@
+{%  block css_head %}
+    <style type="text/css">
+    {%  if file_upload %}
+    .ne {
+        background: cornflowerblue;
+    }
+    {% endif %}
+    .nw {
+        background: darkseagreen;
+    }
+    .rm {
+        background: darksalmon;
+    }
+    .par {
+        background: ghostwhite;
+    }
+    .impar {
+        background: lightgrey;
+    }
+    .error {
+        background: lightcoral;
+    }
+    </style>
+{% endblock %}
+
+{% extends 'base.html' %}
+
+{% block header %}
+  <h1>{% block title %}Log In{% endblock %}</h1>
+{% endblock %}
+
+{% block content %}
+    {% block formulario %}
+        <form method=post enctype=multipart/form-data>
+        <h1>Introducir datos necesarios</h1>
+        <div>
+            <label for="username">Nombre de usuario en vBulletin</label>
+            <input name="username" id="username" required>
+        </div>
+        <div>
+            <label for="password">Contraseña para vBulletin</label>
+            <input name="password" id="password" required>
+        </div>
+        <div>
+            <label for="mongouser">Usuario de mongodb atlas</label>
+            <input name="mongouser" id="mongouser" required>
+        </div>
+        <div>
+            <label for="mongopassword">Contraseña de mongodb atlas</label>
+            <input name="mongopassword" id="mongopassword" required>
+        </div>
+        <div>
+            <label for="forum_base">Url base del foro vBulletin</label>
+            <input name="forum_base" id="forum_base" required>
+        </div>
+        <div>
+            <input type=submit value="Comparar">
+        </div>
+
+
+      </form>
+    {% endblock %}
+{% endblock %}

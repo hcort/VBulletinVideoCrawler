@@ -2,9 +2,38 @@ import threading
 import time
 from typing import Callable, TypeVar
 
+from pymongo import MongoClient
+
 from utils import fill_parser_data
 from youtube_calls import playlist_insert
 from youtube_profile import YoutubeProfile
+
+
+def local_mongo_to_atlas():
+    parser_data = fill_parser_data()
+    local_conn_str = "mongodb://{usr}:{pwd}@{host}/{dbname}".format(usr=parser_data['mongouser'],
+                                                                    pwd=parser_data['mongopassword'],
+                                                                    host='127.0.0.1:27017', dbname='admin')
+    atlas_usr = text = input("atlas username")
+    atlas_pwd = text = input("atlas password")
+    atlas_host = text = input("atlas host")
+    atlas_conn_str = "mongodb+srv://{usr}:{pwd}@{host}/{dbname}".format(usr=atlas_usr,
+                                                                        pwd=atlas_pwd,
+                                                                        host=atlas_host,
+                                                                        dbname='test')
+    local_mongo = MongoClient(local_conn_str)
+    atlas_mongo = MongoClient(atlas_conn_str)
+    local_database_names = local_mongo.list_database_names()
+    atlas_database_names = atlas_mongo.list_database_names()
+    if 'vBulletin' in local_database_names:
+        local_vbulletin_db = local_mongo['vBulletin']
+        atlas_vbulletin_db = atlas_mongo['vBulletin']
+        local_collection_names = local_vbulletin_db.list_collection_names()
+        for collection_name in local_collection_names:
+            local_collection = list(local_vbulletin_db[collection_name].find())
+            atlas_connection = atlas_vbulletin_db[collection_name]
+            atlas_connection.insert_many(local_collection)
+
 
 T = TypeVar('T')
 
@@ -85,6 +114,7 @@ def main():
     user_profile = YoutubeProfile(fill_parser_data())
     # test_threads(user_profile)
     # test_error_values_playlistitems_insert(user_profile)
+    local_mongo_to_atlas()
     pass
 
 
