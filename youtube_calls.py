@@ -1,9 +1,11 @@
 import os
 
+import google.oauth2.credentials
 import google_auth_oauthlib
 import googleapiclient
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.errors import HttpError
+
 from utils import process_exception
 
 # The CLIENT_SECRETS_FILE variable specifies the name of a file that contains
@@ -46,12 +48,26 @@ def get_flow_from_env():
 
 
 # Authorize the request and store authorization credentials.
-def get_authenticated_service():
+def get_authenticated_service(credentials_dict=None):
+    """
+
+    :param credentials_dict: credentials obtained via OAuth. If not present then generate url and print it
+    :return: the youtube client
+    """
     if os.environ.get('VBULLETIN_OAUTH_SOURCE', '') == 'env':
         flow = get_flow_from_env()
     else:
         flow = get_flow_from_file()
-    credentials = flow.run_console()
+    if not credentials_dict:
+        credentials = flow.run_console()
+    else:
+        credentials = google.oauth2.credentials.Credentials(
+            credentials_dict["token"],
+            refresh_token=credentials_dict["refresh_token"],
+            token_uri=credentials_dict["token_uri"],
+            client_id=credentials_dict["client_id"],
+            client_secret=credentials_dict["client_secret"],
+            scopes=credentials_dict["scopes"])
     return googleapiclient.discovery.build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
 

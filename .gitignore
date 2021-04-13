@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# project config
+.idea/
+
+# configuration files
+/res/

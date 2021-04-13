@@ -75,7 +75,6 @@ def fill_parser_data():
                 }
             ]
         }
-    parser_data['file_param'] = file_param
     return parser_data
 
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+import json
 import os
 import re
 
@@ -18,6 +18,7 @@ from flask import request, render_template
 from pymongo import MongoClient
 
 from youtube_calls import get_flow_from_env, playlist_insert
+from youtube_profile import build_youtube_profile, YoutubeProfileEncoder, json_as_youtube_profile
 
 CLIENT_SECRETS_FILE = "res/client_secret.json"
 
@@ -67,7 +68,7 @@ def authorize():
     if callback_url:
         flow.redirect_uri = flask.url_for('oauth2callback', _external=True) + '?callback=' + callback_url
     else:
-        flow.redirect_uri = flask.url_for('oauth2callback',  _external=True)
+        flow.redirect_uri = flask.url_for('oauth2callback', _external=True)
     # flow.redirect_uri = flask.url_for(callback_url, _external=True)
     authorization_url, state = flow.authorization_url(
         # This parameter enables offline access which gives your application
@@ -83,33 +84,46 @@ def authorize():
     return flask.redirect(authorization_url)
 
 
+def yt_profile_from_request(form_dict):
+    """
+    FIXME what do If data from request is different than stored profile(?)
+    :param form_dict: Values submitted by user
+    :return:
+    """
+    mongouser = form_dict.get('mongouser', '')
+    mongopassword = form_dict.get('mongopassword', '')
+    mongohost = form_dict.get('mongohost', '')
+    forumbase = form_dict.get('forumbase', '')
+    vbulletinuser = form_dict.get('vbulletinuser', '')
+    vbulletinpwd = form_dict.get('vbulletinpwd', '')
+    # Load the credentials from the session.
+    if 'youtube_profile' not in flask.session:
+        yt_profile = build_youtube_profile(vbulletinuser=vbulletinuser, vbulletinpwd=vbulletinpwd,
+                                           mongouser=mongouser, mongopwd=mongopassword,
+                                           mongohost=mongohost,
+                                           forumbase=forumbase,
+                                           credentials=flask.session['credentials'])
+        flask.session['youtube_profile'] = json.dumps(yt_profile, cls=YoutubeProfileEncoder)
+    else:
+        yt_profile = json.loads(flask.session['youtube_profile'], object_hook=json_as_youtube_profile)
+    return yt_profile
+
+
 @app.route('/update_test', methods=['GET', 'POST'])
 def update_test():
     if request.method == 'POST':
-        mongouser = request.form['mongouser']
-        mongopassword = request.form['mongopassword']
-        # Load the credentials from the session.
-        credentials = google.oauth2.credentials.Credentials(
-            **flask.session['credentials'])
-        client = googleapiclient.discovery.build(
-            API_SERVICE_NAME, API_VERSION, credentials=credentials)
-        atlas_conn_str = "mongodb+srv://{usr}:{pwd}@{host}/{dbname}".format(usr=mongouser,
-                                                                            pwd=mongopassword,
-                                                                            host='cluster0.crnjd.mongodb.net',
-                                                                            dbname='test')
-        atlas_mongo = MongoClient(atlas_conn_str)
-        database = atlas_mongo['vBulletin']
+        yt_profile = yt_profile_from_request(request.form)
+        database = yt_profile.mongo['vBulletin']
         video_thread = database['video_threads'].find_one()
-        pending_list = database['pending_videos'].find_one({'id': video_thread['id']})
+        pending_list = yt_profile.mongo_get_pending_videos_info(video_thread['id'])
         video_url = pending_list['videos'][10]['url']
         regex_id = re.compile("watch\?v=([^\"&?\\\/]{11})")
         m = regex_id.search(video_url)
         video_id = m.group(1)
         playlist_insert_response = playlist_insert(playlist_id=video_thread['playlist_id'],
                                                    video_id=video_id,
-                                                   youtube=client)
+                                                   youtube=yt_profile.youtube)
         return flask.jsonify(playlist_insert_response)
-
     if 'credentials' not in flask.session:
         return flask.redirect('authorize?callback=update_test')
     return render_template('update_test.html')
